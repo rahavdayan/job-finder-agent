@@ -9,6 +9,7 @@ and stores them in the JOB_PAGES_RAW database table.
 
 from bs4 import BeautifulSoup
 from typing import Optional
+import re
 from sqlalchemy.orm import Session
 from urllib.parse import urljoin, urlparse
 import time
@@ -30,7 +31,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('scraping.log'),
+        logging.FileHandler('scrape.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -53,36 +54,48 @@ class WeWorkRemotelyScraper:
         self.page = self.context.new_page()
         self.request_delay = 2  # seconds between requests
         self.last_request_time = 0
-    
-    def __del__(self):
-        """Clean up Playwright resources"""
+
+    def close(self):
+        """Deterministically clean up Playwright resources to avoid EPIPE on shutdown."""
         try:
             if hasattr(self, 'page') and self.page:
                 try:
                     self.page.close()
                 except Exception as e:
                     logger.warning(f"Error closing page: {e}")
-            
+                finally:
+                    self.page = None
             if hasattr(self, 'context') and self.context:
                 try:
                     self.context.close()
                 except Exception as e:
                     logger.warning(f"Error closing browser context: {e}")
-            
+                finally:
+                    self.context = None
             if hasattr(self, 'browser') and self.browser:
                 try:
                     self.browser.close()
                 except Exception as e:
                     logger.warning(f"Error closing browser: {e}")
-            
+                finally:
+                    self.browser = None
             if hasattr(self, 'playwright') and self.playwright:
                 try:
                     self.playwright.stop()
                 except Exception as e:
                     logger.warning(f"Error stopping Playwright: {e}")
+                finally:
+                    self.playwright = None
         except Exception as e:
-            # Prevent any exceptions from being raised during cleanup
             logger.warning(f"Error during cleanup: {e}")
+    
+    def __del__(self):
+        """Clean up Playwright resources"""
+        try:
+            self.close()
+        except Exception:
+            # Prevent any exceptions from being raised during cleanup
+            pass
         
     def _respect_delay(self):
         """Ensure we're not making requests too quickly"""
@@ -91,7 +104,7 @@ class WeWorkRemotelyScraper:
             time.sleep(self.request_delay - elapsed)
         self.last_request_time = time.time()
 
-    def fetch_landing_page(self, save_to_file: str = "landing_page.html") -> str:
+    def fetch_landing_page(self, save_to_file: Optional[str] = None) -> str:
         """Fetch the HTML content of the We Work Remotely landing page using Playwright"""
         try:
             self._respect_delay()
@@ -208,11 +221,17 @@ class WeWorkRemotelyScraper:
             raise
     
     def clear_existing_data(self, db: Session):
-        """Clear all existing data from JOB_PAGES_RAW table"""
+        """Clear all existing data from both JOB_PAGES_PARSED and JOB_PAGES_RAW tables.
+        Delete parsed records first due to foreign key constraints.
+        """
         try:
-            deleted_count = db.query(JobPageRaw).delete()
+            # Delete from parsed first to satisfy FK to raw
+            parsed_deleted = db.query(JobPageParsed).delete()
+            raw_deleted = db.query(JobPageRaw).delete()
             db.commit()
-            logger.info(f"Cleared {deleted_count} existing records from JOB_PAGES_RAW table")
+            logger.info(
+                f"Cleared existing records: JOB_PAGES_PARSED={parsed_deleted}, JOB_PAGES_RAW={raw_deleted}"
+            )
         except Exception as e:
             logger.error(f"Error clearing existing data: {e}")
             db.rollback()
@@ -286,26 +305,50 @@ class WeWorkRemotelyScraper:
             
             # Extract date posted
             date_posted = None
-            date_elem = soup.find('li', class_='lis-container__job__sidebar__job-about__list__item', 
-                                string=lambda text: text and 'Posted on' in text)
+            date_elem = next(
+                (li for li in soup.find_all('li', class_='lis-container__job__sidebar__job-about__list__item')
+                 if 'Posted on' in li.get_text()),
+                None
+            )
             if date_elem:
                 date_span = date_elem.find('span')
                 if date_span:
                     date_posted = parse_relative_date(date_span.get_text(strip=True))
             
             # Extract salary
-            salary = None
-            salary_elem = soup.find('li', class_='lis-container__job__sidebar__job-about__list__item', 
-                                  string=lambda text: text and 'Salary' in text)
+            salary_min = None
+            salary_max = None
+            salary_elem = next(
+                (li for li in soup.find_all('li', class_='lis-container__job__sidebar__job-about__list__item')
+                 if 'Salary' in li.get_text()),
+                None
+            )
             if salary_elem:
                 salary_span = salary_elem.find('span', class_='box box--blue')
                 if salary_span:
-                    salary = salary_span.get_text(strip=True)
+                    salary_text = salary_span.get_text(strip=True)
+                    # Normalize text and extract numeric parts
+                    # Examples:
+                    # "$75,000 - $99,999 USD" -> min=75000, max=99999
+                    # "$100,000 or more USD" -> min=100000, max=None
+                    numbers = [int(n.replace(',', '')) for n in re.findall(r"\$?([0-9][0-9,]*)", salary_text)]
+                    if 'or more' in salary_text.lower():
+                        if numbers:
+                            salary_min = numbers[0]
+                            salary_max = None
+                    elif len(numbers) >= 2:
+                        salary_min, salary_max = numbers[0], numbers[1]
+                    elif len(numbers) == 1:
+                        # Single number without explicit range; treat as min
+                        salary_min = numbers[0]
             
             # Extract job type
             job_type = None
-            job_type_elem = soup.find('li', class_='lis-container__job__sidebar__job-about__list__item',
-                                    string=lambda text: text and 'Job type' in text)
+            job_type_elem = next(
+                (li for li in soup.find_all('li', class_='lis-container__job__sidebar__job-about__list__item')
+                 if 'Job type' in li.get_text()),
+                None
+            )
             if job_type_elem:
                 job_type_span = job_type_elem.find('span', class_='box--jobType')
                 if job_type_span:
@@ -314,8 +357,11 @@ class WeWorkRemotelyScraper:
             # Extract skills
             skills = None
             skills_list = []
-            skills_elem = soup.find('li', class_='lis-container__job__sidebar__job-about__list__item',
-                                  string=lambda text: text and 'Skills' in text)
+            skills_elem = next(
+                (li for li in soup.find_all('li', class_='lis-container__job__sidebar__job-about__list__item')
+                 if 'Skills' in li.get_text()),
+                None
+            )
             if skills_elem:
                 skill_boxes = skills_elem.find_all('span', class_='box--multi')
                 skills_list = [box.get_text(strip=True) for box in skill_boxes]
@@ -325,7 +371,8 @@ class WeWorkRemotelyScraper:
             description = None
             description_elem = soup.select_one('div.lis-container__job__content__description')
             if description_elem:
-                description = str(description_elem)  # Keep as HTML
+                # Save inner HTML only (remove outer div wrapper)
+                description = description_elem.decode_contents()
             
             # Create parsed job entry
             parsed_job = JobPageParsed(
@@ -334,7 +381,8 @@ class WeWorkRemotelyScraper:
                 employer=employer,
                 location=location,
                 date_posted=date_posted,
-                salary=salary,
+                salary_min=salary_min,
+                salary_max=salary_max,
                 job_type=job_type,
                 skills=skills,
                 description=description,
@@ -352,7 +400,7 @@ class WeWorkRemotelyScraper:
             db.rollback()
             raise
     
-    def run_scraping(self, max_jobs: int = None):
+    def run_scraping(self, max_jobs: Optional[int] = None):
         """
         Main method to run the complete scraping process
         
@@ -449,9 +497,10 @@ def main():
     
     parser = argparse.ArgumentParser(description='Scrape job listings from We Work Remotely')
     parser.add_argument('--max-jobs', type=int, default=None,
-                      help='Maximum number of jobs to process')
+                      help='Maximum number of jobs to process (default: None)')
     args = parser.parse_args()
     
+    scraper = None
     try:
         scraper = WeWorkRemotelyScraper()
         scraper.run_scraping(max_jobs=args.max_jobs)
@@ -459,6 +508,9 @@ def main():
     except Exception as e:
         logger.error(f"Scraping process failed: {e}")
         sys.exit(1)
+    finally:
+        if scraper:
+            scraper.close()
 
 if __name__ == "__main__":
     main()

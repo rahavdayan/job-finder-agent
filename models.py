@@ -24,7 +24,8 @@ class JobPageParsed(Base):
     employer = Column(String, nullable=True)
     location = Column(String, nullable=True)
     date_posted = Column(String, nullable=True)  # ISO 8601 timestamp or date
-    salary = Column(String, nullable=True)  # number or range, e.g., '100000-120000'
+    salary_min = Column(Integer, nullable=True)  # e.g., 75000
+    salary_max = Column(Integer, nullable=True)  # e.g., 99999 (nullable for open-ended ranges)
     job_type = Column(String, nullable=True)  # Full-time, Part-time, Contract, etc.
     skills = Column(String, nullable=True)  # Stored as comma-separated string for SQLite compatibility
     description = Column(String, nullable=True)
