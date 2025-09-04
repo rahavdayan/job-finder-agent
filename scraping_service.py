@@ -8,11 +8,12 @@ and stores them in the JOB_PAGES_RAW database table.
 """
 
 from bs4 import BeautifulSoup
+from typing import Optional
 from sqlalchemy.orm import Session
 from urllib.parse import urljoin, urlparse
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Set, Optional
 import sys
 import os
@@ -22,7 +23,7 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from database import SessionLocal, engine
-from models import Base, JobPageRaw
+from models import Base, JobPageRaw, JobPageParsed
 
 # Configure logging
 logging.basicConfig(
@@ -124,22 +125,55 @@ class WeWorkRemotelyScraper:
                 logger.info("Saved error screenshot to error_screenshot.png")
             raise
     
-    def extract_job_urls(self, html_content: str) -> List[str]:
-        """Extract individual job URLs from the landing page HTML"""
+    def extract_landing_page_info(self, html_content: str) -> tuple[list[str], list[str]]:
+        """
+        Extract job information from the landing page HTML.
+        
+        Returns:
+            tuple[list[str], list[str]]: A tuple containing two lists:
+                - First list contains job URLs
+                - Second list contains corresponding company locations
+        """
         try:
             soup = BeautifulSoup(html_content, 'html5lib')
+            job_urls = []
+            locations = []
+            seen_urls = set()
             
-            # Find all job listing containers and extract hrefs
-            job_links = [a['href'] for a in soup.select('[id^="category-"] > article > ul > li > a[href^="/remote-jobs/"]') 
-                        if a.get('href') and not any(skip in a['href'].lower() for skip in ['#', 'javascript:', 'mailto:'])]
+            # Find all job listing containers
+            job_containers = soup.select('[id^="category-"] > article > ul > li')
             
-            # Convert to absolute URLs and remove duplicates
-            seen = set()
-            return [f"{self.base_url}{url}" for url in job_links if url not in seen and not seen.add(url)]
+            for container in job_containers:
+                try:
+                    # Extract job link
+                    link_elem = container.find('a', href=lambda x: x and x.startswith('/remote-jobs/'))
+                    if not link_elem or not link_elem.get('href'):
+                        continue
+                        
+                    # Create absolute URL
+                    job_url = f"{self.base_url}{link_elem['href']}"
+                    
+                    # Skip if we've already seen this URL
+                    if job_url in seen_urls:
+                        continue
+                        
+                    # Extract location from the company headquarters element
+                    location_elem = link_elem.select_one('p.new-listing__company-headquarters')
+                    location = location_elem.get_text(strip=True) if location_elem else 'Remote'
+                    
+                    job_urls.append(job_url)
+                    locations.append(location)
+                    seen_urls.add(job_url)
+                    
+                except Exception as e:
+                    logger.warning(f"Error processing job container: {e}")
+                    continue
+            
+            return job_urls, locations
             
         except Exception as e:
-            logger.error(f"Error extracting job URLs: {e}")
-            return []
+            logger.error(f"Error extracting job information: {e}")
+            return [], []
     
     def fetch_job_page(self, job_url: str) -> str:
         """Fetch the raw HTML content of a single job page using Playwright"""
@@ -185,7 +219,14 @@ class WeWorkRemotelyScraper:
             raise
     
     def save_job_page(self, db: Session, url: str, raw_html: str):
-        """Save a job page's raw HTML to the database"""
+        """
+        Save a job page's raw HTML to the database
+        
+        Args:
+            db: Database session
+            url: Job posting URL
+            raw_html: Raw HTML content of the job page
+        """
         try:
             job_page = JobPageRaw(
                 url=url,
@@ -195,14 +236,130 @@ class WeWorkRemotelyScraper:
             db.add(job_page)
             db.commit()
             logger.info(f"Saved job page: {url}")
+            return job_page.id
         except Exception as e:
             logger.error(f"Error saving job page {url}: {e}")
             db.rollback()
             raise
+            
+    def parse_job_page(self, db: Session, raw_html: str, job_page_raw_id: int, location: str):
+        """
+        Parse job details from raw HTML and save to JobPageParsed table
+        
+        Args:
+            db: Database session
+            raw_html: Raw HTML content of the job page
+            job_page_raw_id: ID of the corresponding raw job page
+            location: Company location from the job listing
+        """
+        def parse_relative_date(relative_date_str):
+            """Convert relative date string to actual date"""
+            try:
+                today = datetime.utcnow().date()
+                if 'hour' in relative_date_str or 'minute' in relative_date_str:
+                    return today
+                
+                num = int(''.join(filter(str.isdigit, relative_date_str)))
+                
+                if 'day' in relative_date_str:
+                    return today - timedelta(days=num)
+                elif 'week' in relative_date_str:
+                    return today - timedelta(weeks=num)
+                elif 'month' in relative_date_str:
+                    # Approximate month as 30 days
+                    return today - timedelta(days=num*30)
+                return today
+            except Exception as e:
+                logger.warning(f"Error parsing date '{relative_date_str}': {e}")
+                return None
+
+        try:
+            soup = BeautifulSoup(raw_html, 'html5lib')
+            
+            # Extract job title
+            title_elem = soup.select_one('h2.lis-container__header__hero__company-info__title')
+            job_title = title_elem.get_text(strip=True) if title_elem else None
+            
+            # Extract employer
+            employer_elem = soup.select_one('.lis-container__job__sidebar__companyDetails__info__title h3')
+            employer = employer_elem.get_text(strip=True) if employer_elem else None
+            
+            # Extract date posted
+            date_posted = None
+            date_elem = soup.find('li', class_='lis-container__job__sidebar__job-about__list__item', 
+                                string=lambda text: text and 'Posted on' in text)
+            if date_elem:
+                date_span = date_elem.find('span')
+                if date_span:
+                    date_posted = parse_relative_date(date_span.get_text(strip=True))
+            
+            # Extract salary
+            salary = None
+            salary_elem = soup.find('li', class_='lis-container__job__sidebar__job-about__list__item', 
+                                  string=lambda text: text and 'Salary' in text)
+            if salary_elem:
+                salary_span = salary_elem.find('span', class_='box box--blue')
+                if salary_span:
+                    salary = salary_span.get_text(strip=True)
+            
+            # Extract job type
+            job_type = None
+            job_type_elem = soup.find('li', class_='lis-container__job__sidebar__job-about__list__item',
+                                    string=lambda text: text and 'Job type' in text)
+            if job_type_elem:
+                job_type_span = job_type_elem.find('span', class_='box--jobType')
+                if job_type_span:
+                    job_type = job_type_span.get_text(strip=True)
+            
+            # Extract skills
+            skills = None
+            skills_list = []
+            skills_elem = soup.find('li', class_='lis-container__job__sidebar__job-about__list__item',
+                                  string=lambda text: text and 'Skills' in text)
+            if skills_elem:
+                skill_boxes = skills_elem.find_all('span', class_='box--multi')
+                skills_list = [box.get_text(strip=True) for box in skill_boxes]
+                skills = ','.join(skills_list)  # Convert list to comma-separated string
+            
+            # Extract job description
+            description = None
+            description_elem = soup.select_one('div.lis-container__job__content__description')
+            if description_elem:
+                description = str(description_elem)  # Keep as HTML
+            
+            # Create parsed job entry
+            parsed_job = JobPageParsed(
+                job_page_raw_id=job_page_raw_id,
+                job_title=job_title,
+                employer=employer,
+                location=location,
+                date_posted=date_posted,
+                salary=salary,
+                job_type=job_type,
+                skills=skills,
+                description=description,
+                seniority=None,  # Not explicitly available
+                education_level=None,  # Not explicitly available
+                timestamp=datetime.utcnow()
+            )
+            
+            db.add(parsed_job)
+            db.commit()
+            logger.info(f"Parsed and saved job details for raw ID {job_page_raw_id}")
+            
+        except Exception as e:
+            logger.error(f"Error parsing job page {job_page_raw_id}: {e}")
+            db.rollback()
+            raise
     
-    def run_scraping(self):
-        """Main method to run the complete scraping process"""
-        logger.info("Starting We Work Remotely scraping process")
+    def run_scraping(self, max_jobs: int = None):
+        """
+        Main method to run the complete scraping process
+        
+        Args:
+            max_jobs: Maximum number of jobs to process (None for no limit)
+        """
+        logger.info(f"Starting We Work Remotely scraping process{'' if max_jobs is None else f' (max {max_jobs} jobs)'}")
         
         # Create database tables if they don't exist
         Base.metadata.create_all(bind=engine)
@@ -217,26 +374,33 @@ class WeWorkRemotelyScraper:
             # Step 2: Fetch landing page
             landing_html = self.fetch_landing_page()
             
-            # Step 3: Extract job URLs
-            job_urls = self.extract_job_urls(landing_html)
+            # Step 3: Extract job URLs and locations
+            job_urls, locations = self.extract_landing_page_info(landing_html)
             
-            if not job_urls:
-                logger.warning("No job URLs found on the landing page")
+            if not job_urls or not locations or len(job_urls) != len(locations):
+                logger.warning("No valid job information found on the landing page")
                 return
             
             # Step 4: Fetch and save each job page
             successful_saves = 0
             failed_saves = 0
+            saved_jobs = []  # Store (job_id, location) for parsing step
             
-            for i, job_url in enumerate(job_urls, 1):
+            # Apply max_jobs limit if specified
+            if max_jobs is not None:
+                job_urls = job_urls[:max_jobs]
+                locations = locations[:max_jobs]
+                
+            for i, (job_url, location) in enumerate(zip(job_urls, locations), 1):
                 try:
                     logger.info(f"Processing job {i}/{len(job_urls)}: {job_url}")
                     
                     # Fetch job page HTML
                     job_html = self.fetch_job_page(job_url)
                     
-                    # Save to database
-                    self.save_job_page(db, job_url, job_html)
+                    # Save to database and store the ID for parsing
+                    job_id = self.save_job_page(db, job_url, job_html)
+                    saved_jobs.append((job_id, location))
                     successful_saves += 1
                     
                     # Add a small delay to be respectful to the server
@@ -249,6 +413,30 @@ class WeWorkRemotelyScraper:
             
             logger.info(f"Scraping completed. Successfully saved: {successful_saves}, Failed: {failed_saves}")
             
+            # Step 5: Parse saved job pages
+            if saved_jobs:
+                logger.info("Starting to parse saved job pages...")
+                successful_parses = 0
+                failed_parses = 0
+                
+                for job_id, location in saved_jobs:
+                    try:
+                        # Get the raw job page from database
+                        job_page = db.query(JobPageRaw).filter(JobPageRaw.id == job_id).first()
+                        if job_page:
+                            self.parse_job_page(db, job_page.raw_html, job_id, location)
+                            successful_parses += 1
+                        else:
+                            logger.warning(f"Job page with ID {job_id} not found for parsing")
+                            failed_parses += 1
+                            
+                    except Exception as e:
+                        logger.error(f"Failed to parse job {job_id}: {e}")
+                        failed_parses += 1
+                        continue
+                
+                logger.info(f"Parsing completed. Successfully parsed: {successful_parses}, Failed: {failed_parses}")
+            
         except Exception as e:
             logger.error(f"Critical error during scraping process: {e}")
             raise
@@ -257,9 +445,16 @@ class WeWorkRemotelyScraper:
 
 def main():
     """Main entry point for the scraping script"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Scrape job listings from We Work Remotely')
+    parser.add_argument('--max-jobs', type=int, default=None,
+                      help='Maximum number of jobs to process')
+    args = parser.parse_args()
+    
     try:
         scraper = WeWorkRemotelyScraper()
-        scraper.run_scraping()
+        scraper.run_scraping(max_jobs=args.max_jobs)
         logger.info("Scraping process completed successfully")
     except Exception as e:
         logger.error(f"Scraping process failed: {e}")
