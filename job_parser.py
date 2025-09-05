@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import argparse
 from typing import Optional, Dict, Any, List
 from sqlalchemy.orm import Session
 from openai import OpenAI
@@ -106,27 +107,17 @@ Job information: {job_text}"""
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.1,
-                max_tokens=500
+                response_format={"type": "json_object"},
+                temperature=0.1
             )
             
-            content = response.choices[0].message.content.strip()
-            
-            # Try to parse JSON from the response
+            parsed_response = response.choices[0].message.content
             try:
-                # Remove any markdown code blocks if present
-                if content.startswith("```json"):
-                    content = content[7:]
-                if content.endswith("```"):
-                    content = content[:-3]
-                content = content.strip()
-                
-                extracted_data = json.loads(content)
-                return extracted_data
+                data = json.loads(parsed_response)
+                return data
                 
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON response: {e}")
-                logger.error(f"Response content: {content}")
+                logger.error(f"JSON decode error: {e}")
                 return None
                 
         except Exception as e:
@@ -157,7 +148,7 @@ Job information: {job_text}"""
             if job.skills is None and extracted_data.get('skills'):
                 # Convert list to comma-separated string for SQLite compatibility
                 if isinstance(extracted_data['skills'], list):
-                    job.skills = ', '.join(extracted_data['skills'])
+                    job.skills = ','.join(extracted_data['skills'])
                 else:
                     job.skills = str(extracted_data['skills'])
                 updated = True
@@ -183,28 +174,39 @@ Job information: {job_text}"""
             
         return updated
     
-    def process_all_jobs(self) -> Dict[str, int]:
+    def process_all_jobs(self, limit: Optional[int] = None) -> Dict[str, int]:
         """
-        Process all job entries and extract missing fields
+        Process job entries and extract missing fields
         
+        Args:
+            limit: Maximum number of jobs to process (None for no limit)
+            
         Returns:
             Dict[str, int]: Statistics about processing
         """
         stats = {
             'total_jobs': 0,
-            'jobs_with_missing_fields': 0,
             'jobs_processed': 0,
+            'jobs_with_missing_fields': 0,
             'jobs_updated': 0,
-            'api_failures': 0
+            'api_failures': 0,
+            'limit_reached': False
         }
         
         db = SessionLocal()
         try:
-            # Fetch all job entries
-            jobs = db.query(JobPageParsed).all()
+            # Fetch job entries with missing fields
+            query = db.query(JobPageParsed)
+            
+            # Apply limit if specified
+            if limit is not None and limit > 0:
+                query = query.limit(limit)
+                
+            jobs = query.all()
             stats['total_jobs'] = len(jobs)
             
-            logger.info(f"Found {stats['total_jobs']} job entries")
+            logger.info(f"Found {stats['total_jobs']} job entries" + 
+                       (f" (limited to {limit})" if limit else ""))
             
             for job in jobs:
                 if not self.has_missing_fields(job):
@@ -234,6 +236,12 @@ Job information: {job_text}"""
                 if self.update_job_fields(db, job, extracted_data):
                     stats['jobs_updated'] += 1
                 
+                # Check if we've reached the limit of jobs to process
+                if limit is not None and stats['jobs_processed'] >= limit:
+                    stats['limit_reached'] = True
+                    logger.info(f"Reached processing limit of {limit} jobs")
+                    break
+                
         except Exception as e:
             logger.error(f"Error processing jobs: {e}")
             db.rollback()
@@ -242,16 +250,23 @@ Job information: {job_text}"""
         
         return stats
 
+def parse_arguments():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description='Extract missing job fields using OpenAI')
+    parser.add_argument('--limit', type=int, default=None,
+                      help='Maximum number of jobs to process (default: no limit)')
+    return parser.parse_args()
 
 def main():
     """
     Main function to run the job field extraction process
     """
-    logger.info("Starting job field extraction process")
+    args = parse_arguments()
+    logger.info(f"Starting job field extraction process{'' if args.limit is None else f' (limit: {args.limit} jobs)'}")
     
     try:
         extractor = JobFieldExtractor()
-        stats = extractor.process_all_jobs()
+        stats = extractor.process_all_jobs(limit=args.limit)
         
         logger.info("Job field extraction completed")
         logger.info(f"Statistics: {stats}")
@@ -262,11 +277,15 @@ def main():
         print(f"Jobs processed with OpenAI: {stats['jobs_processed']}")
         print(f"Jobs successfully updated: {stats['jobs_updated']}")
         print(f"API failures: {stats['api_failures']}")
+        if args.limit and stats['limit_reached']:
+            print(f"\nNote: Processing stopped after reaching the limit of {args.limit} jobs")
         
     except Exception as e:
         logger.error(f"Job field extraction failed: {e}")
         print(f"Error: {e}")
-
+        return 1
+    
+    return 0
 
 if __name__ == "__main__":
-    main()
+    exit(main())
