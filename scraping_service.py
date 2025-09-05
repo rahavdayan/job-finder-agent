@@ -261,6 +261,15 @@ class WeWorkRemotelyScraper:
             db.rollback()
             raise
             
+    def clean_body_content(self, body_content):
+        """Clean HTML content by removing unnecessary tags and normalizing whitespace."""
+        if not body_content:
+            return ""
+        soup = BeautifulSoup(body_content, 'html.parser')
+        # Separates cleaned content into newlines and removes extra whitespace
+        cleaned_content = soup.get_text(separator="\n")
+        return "\n".join(line.strip() for line in cleaned_content.splitlines() if line.strip())
+
     def parse_job_page(self, db: Session, raw_html: str, job_page_raw_id: int, location: str):
         """
         Parse job details from raw HTML and save to JobPageParsed table
@@ -316,8 +325,7 @@ class WeWorkRemotelyScraper:
                     date_posted = parse_relative_date(date_span.get_text(strip=True))
             
             # Extract salary
-            salary_min = None
-            salary_max = None
+            salary = None
             salary_elem = next(
                 (li for li in soup.find_all('li', class_='lis-container__job__sidebar__job-about__list__item')
                  if 'Salary' in li.get_text()),
@@ -326,21 +334,8 @@ class WeWorkRemotelyScraper:
             if salary_elem:
                 salary_span = salary_elem.find('span', class_='box box--blue')
                 if salary_span:
-                    salary_text = salary_span.get_text(strip=True)
-                    # Normalize text and extract numeric parts
-                    # Examples:
-                    # "$75,000 - $99,999 USD" -> min=75000, max=99999
-                    # "$100,000 or more USD" -> min=100000, max=None
-                    numbers = [int(n.replace(',', '')) for n in re.findall(r"\$?([0-9][0-9,]*)", salary_text)]
-                    if 'or more' in salary_text.lower():
-                        if numbers:
-                            salary_min = numbers[0]
-                            salary_max = None
-                    elif len(numbers) >= 2:
-                        salary_min, salary_max = numbers[0], numbers[1]
-                    elif len(numbers) == 1:
-                        # Single number without explicit range; treat as min
-                        salary_min = numbers[0]
+                    # Keep the raw text for storage; normalization/parsing can be done later if needed
+                    salary = salary_span.get_text(strip=True)
             
             # Extract job type
             job_type = None
@@ -372,7 +367,7 @@ class WeWorkRemotelyScraper:
             description_elem = soup.select_one('div.lis-container__job__content__description')
             if description_elem:
                 # Save inner HTML only (remove outer div wrapper)
-                description = description_elem.decode_contents()
+                description = self.clean_body_content(description_elem.decode_contents())
             
             # Create parsed job entry
             parsed_job = JobPageParsed(
@@ -381,8 +376,7 @@ class WeWorkRemotelyScraper:
                 employer=employer,
                 location=location,
                 date_posted=date_posted,
-                salary_min=salary_min,
-                salary_max=salary_max,
+                salary=salary,
                 job_type=job_type,
                 skills=skills,
                 description=description,
