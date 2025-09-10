@@ -1,8 +1,8 @@
-"""Added Models
+"""empty message
 
-Revision ID: 7e2a7bd5583c
+Revision ID: e3b928b1b228
 Revises: 
-Create Date: 2025-09-04 17:24:03.800976
+Create Date: 2025-09-09 22:06:41.745367
 
 """
 from alembic import op
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = '7e2a7bd5583c'
+revision = 'e3b928b1b228'
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -34,7 +34,12 @@ def upgrade() -> None:
     sa.Column('employer', sa.String(), nullable=True),
     sa.Column('location', sa.String(), nullable=True),
     sa.Column('date_posted', sa.String(), nullable=True),
-    sa.Column('salary', sa.String(), nullable=True),
+    sa.Column('primary_salary_min', sa.Float(), nullable=True),
+    sa.Column('primary_salary_max', sa.Float(), nullable=True),
+    sa.Column('primary_salary_rate', sa.Enum('hourly', 'weekly', 'monthly', 'yearly', 'other', name='salary_rate_enum'), nullable=True),
+    sa.Column('secondary_salary_min', sa.Float(), nullable=True),
+    sa.Column('secondary_salary_max', sa.Float(), nullable=True),
+    sa.Column('secondary_salary_rate', sa.Enum('hourly', 'weekly', 'monthly', 'yearly', 'other', name='salary_rate_enum'), nullable=True),
     sa.Column('job_type', sa.String(), nullable=True),
     sa.Column('skills', sa.String(), nullable=True),
     sa.Column('description', sa.String(), nullable=True),

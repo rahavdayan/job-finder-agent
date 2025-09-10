@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, ARRAY
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, ARRAY, Enum, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -24,7 +24,12 @@ class JobPageParsed(Base):
     employer = Column(String, nullable=True)
     location = Column(String, nullable=True)
     date_posted = Column(String, nullable=True)  # ISO 8601 timestamp or date
-    salary = Column(String, nullable=True)  # Salary information as a string, e.g. "$75,000 - $99,999 per year"
+    primary_salary_min = Column(Float, nullable=True)  # From salary div during scraping
+    primary_salary_max = Column(Float, nullable=True)  # From salary div during scraping
+    primary_salary_rate = Column(Enum('hourly', 'weekly', 'monthly', 'yearly', 'other', name='salary_rate_enum'), nullable=True)  # From salary div during scraping
+    secondary_salary_min = Column(Float, nullable=True)  # From description using LLM
+    secondary_salary_max = Column(Float, nullable=True)  # From description using LLM
+    secondary_salary_rate = Column(Enum('hourly', 'weekly', 'monthly', 'yearly', 'other', name='salary_rate_enum'), nullable=True)  # From description using LLM
     job_type = Column(String, nullable=True)  # Full-time, Part-time, Contract, etc.
     skills = Column(String, nullable=True)  # Stored as comma-separated string for SQLite compatibility
     description = Column(String, nullable=True)

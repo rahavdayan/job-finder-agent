@@ -301,6 +301,16 @@ class WeWorkRemotelyScraper:
                 logger.warning(f"Error parsing date '{relative_date_str}': {e}")
                 return None
 
+        def _to_amount(num_str: str, k_suffix: str) -> float:
+            """Convert matched amount + optional k/K suffix to float"""
+            try:
+                val = float(num_str.replace(',', ''))
+                if k_suffix and k_suffix.lower() == 'k':
+                    val *= 1000
+                return val
+            except Exception:
+                return None
+
         try:
             soup = BeautifulSoup(raw_html, 'html5lib')
             
@@ -324,19 +334,48 @@ class WeWorkRemotelyScraper:
                 if date_span:
                     date_posted = parse_relative_date(date_span.get_text(strip=True))
             
-            # Extract salary
-            salary = None
+            # Parse salary range from the salary div
+            primary_salary_min = None
+            primary_salary_max = None
+            primary_salary_rate = None
+
+            # Find the salary element
             salary_elem = next(
                 (li for li in soup.find_all('li', class_='lis-container__job__sidebar__job-about__list__item')
                  if 'Salary' in li.get_text()),
                 None
             )
             if salary_elem:
-                salary_span = salary_elem.find('span', class_='box box--blue')
+                salary_span = salary_elem.find('span', class_='box')
                 if salary_span:
-                    # Keep the raw text for storage; normalization/parsing can be done later if needed
-                    salary = salary_span.get_text(strip=True)
-            
+                    salary_text = salary_span.get_text(strip=True)
+                    # Match ranges like "$80,000 - $120,000", "$80k to $120k", or "50k - 60k" (currency optional)
+                    range_match = re.search(r"\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*([kK]?)\s*(?:to|-|–|—)\s*\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*([kK]?)", salary_text)
+                    if range_match:
+                        primary_salary_min = _to_amount(range_match.group(1), range_match.group(2))
+                        primary_salary_max = _to_amount(range_match.group(3), range_match.group(4))
+                    else:
+                        # Try to find a single salary figure like "$120,000", "$120k", or "120k"
+                        single_match = re.search(r"\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*([kK]?)", salary_text)
+                        if single_match:
+                            primary_salary_min = _to_amount(single_match.group(1), single_match.group(2))
+                    
+                    # Try to find rate pattern (per hour, per year, etc.)
+                    rate_patterns = {
+                        'hourly': r'(?:per|/|\b)\s*hour|hourly',
+                        'weekly': r'(?:per|/|\b)\s*week|weekly',
+                        'monthly': r'(?:per|/|\b)\s*month|monthly',
+                        'yearly': r'(?:per|/|\b)\s*year|yearly|annual'
+                    }
+                    
+                    for rate, pattern in rate_patterns.items():
+                        if re.search(pattern, salary_text, re.IGNORECASE):
+                            primary_salary_rate = rate
+                            break
+                    
+                    if not primary_salary_rate:
+                        primary_salary_rate = 'yearly'  # Default to yearly if no rate specified
+
             # Extract job type
             job_type = None
             job_type_elem = next(
@@ -376,7 +415,9 @@ class WeWorkRemotelyScraper:
                 employer=employer,
                 location=location,
                 date_posted=date_posted,
-                salary=salary,
+                primary_salary_min=primary_salary_min,
+                primary_salary_max=primary_salary_max,
+                primary_salary_rate=primary_salary_rate,
                 job_type=job_type,
                 skills=skills,
                 description=description,

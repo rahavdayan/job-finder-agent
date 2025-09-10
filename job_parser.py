@@ -37,7 +37,7 @@ class JobFieldExtractor:
         Returns:
             bool: True if any target fields are NULL
         """
-        target_fields = ['salary', 'skills', 'seniority', 'education_level']
+        target_fields = ['skills', 'seniority', 'education_level', 'secondary_salary_rate', 'secondary_salary_min', 'secondary_salary_max']
         return any(getattr(job, field) is None for field in target_fields)
     
     def get_missing_fields(self, job: JobPageParsed) -> List[str]:
@@ -50,7 +50,7 @@ class JobFieldExtractor:
         Returns:
             List[str]: List of field names that are NULL
         """
-        target_fields = ['salary', 'skills', 'seniority', 'education_level']
+        target_fields = ['skills', 'seniority', 'education_level', 'secondary_salary_rate', 'secondary_salary_min', 'secondary_salary_max']
         return [field for field in target_fields if getattr(job, field) is None]
     
     def prepare_job_text(self, job: JobPageParsed) -> str:
@@ -77,15 +77,41 @@ class JobFieldExtractor:
         Returns:
             str: Formatted prompt for OpenAI
         """
-        prompt = """Extract the following fields from the job description below. Return the output as JSON with these keys:
-salary (string, null if not mentioned)
-skills (list of strings, null if not mentioned)
-seniority (junior, mid, senior, lead, executive, null if unclear)
-education_level (high school, associate, bachelor, master, PhD, null if not mentioned)
+        prompt = """Extract salary information and other fields from the job description text below. Return the output as JSON with these keys:
+        secondary_salary_min (float, JSON null if not mentioned or non-numeric)
+        secondary_salary_max (float, JSON null if not mentioned or non-numeric)
+        secondary_salary_rate (hourly, weekly, monthly, yearly, other based on salary context, JSON null if unclear)
+        skills (list of concise strings, JSON null if not mentioned)
+        seniority (junior, mid, senior, lead, executive, JSON null if unclear)
+        education_level (high school, associate, bachelor, master, PhD, JSON null if not mentioned or equivalent practical experience)
 
-Rules: Only use information present in the description. Do not guess or invent values. If a field is missing or unclear, return null.
+        Salary extraction rules:
+        1. REQUIRE compensation context words:
+           "offer|compensation|salary|pay|wage|benefits"
+           
+        2. REQUIRE time period:
+           "hour|week|month|year|annual"
+           
+        3. IGNORE if near business words:
+           "manage|oversee|grow|drive|revenue|budget|portfolio|quota"
 
-Job information: {job_text}"""
+        Examples:
+        VALID 
+        - "salary: $50k/year"
+        - "compensation range: $20-25/hour"
+        - "we offer $60k annually"
+        
+        INVALID 
+        - "manage $1M budget"
+        - "$2M revenue business"
+        - "$500k sales quota"
+
+        Other rules:
+        - For skills, provide concise keywords without descriptors.
+        - For education, prefer null if degree is optional or equivalent experience is mentioned.
+        - For all fields, ensure 'null' is a JSON null, not a string.
+
+        Job information: {job_text}"""
         
         return prompt.format(job_text=job_text)
     
@@ -114,6 +140,10 @@ Job information: {job_text}"""
             parsed_response = response.choices[0].message.content
             try:
                 data = json.loads(parsed_response)
+                # Convert top-level string 'null' to None
+                for key, value in data.items():
+                    if isinstance(value, str) and value.lower() == 'null':
+                        data[key] = None
                 return data
                 
             except json.JSONDecodeError as e:
@@ -140,10 +170,20 @@ Job information: {job_text}"""
         
         try:
             # Only update NULL fields
-            if job.salary is None and extracted_data.get('salary'):
-                job.salary = extracted_data['salary']
+            if job.secondary_salary_rate is None and extracted_data.get('secondary_salary_rate'):
+                job.secondary_salary_rate = extracted_data['secondary_salary_rate']
                 updated = True
-                logger.info(f"Updated salary for job {job.id}: {job.salary}")
+                logger.info(f"Updated secondary_salary_rate for job {job.id}: {job.secondary_salary_rate}")
+            
+            if job.secondary_salary_min is None and extracted_data.get('secondary_salary_min'):
+                job.secondary_salary_min = extracted_data['secondary_salary_min']
+                updated = True
+                logger.info(f"Updated secondary_salary_min for job {job.id}: {job.secondary_salary_min}")
+            
+            if job.secondary_salary_max is None and extracted_data.get('secondary_salary_max'):
+                job.secondary_salary_max = extracted_data['secondary_salary_max']
+                updated = True
+                logger.info(f"Updated secondary_salary_max for job {job.id}: {job.secondary_salary_max}")
             
             if job.skills is None and extracted_data.get('skills'):
                 # Convert list to comma-separated string for SQLite compatibility
