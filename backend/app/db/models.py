@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, ARRAY, Enum, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from database import Base
+from app.db.database import Base
 
 class JobPageRaw(Base):
     __tablename__ = "job_pages_raw"
