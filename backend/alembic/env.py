@@ -9,8 +9,8 @@ from pathlib import Path
 # Add the project root to the Python path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from models import Base
-from database import DATABASE_URL
+from app.db.models import Base
+from app.db.database import DATABASE_URL
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 from openai import OpenAI
 from dotenv import load_dotenv
 
-from database import get_db, SessionLocal
-from models import JobPageParsed
+from app.db.database import SessionLocal
+from app.db.models import JobPageParsed
 
 # Load environment variables
 load_dotenv()
