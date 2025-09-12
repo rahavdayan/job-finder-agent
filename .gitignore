@@ -1,11 +1,50 @@
-# Virtual Environment
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
 backend/venv/
+.env
+*.log
 
 # Database
 backend/job_finder.db
+*.sqlite3
 
-# Logs
-backend/app/services/scraping.log
+# Node.js
+node_modules/
+.next/
+.nuxt/
+dist/
+build/
+.cache/
+coverage/
+.env.local
+.env.*.local
 
-# Environment variables
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Backend specific
+backend/__pycache__/
+backend/**/__pycache__/
 backend/.env
+backend/app/services/*.log
+
+# Frontend specific
+frontend/.env
+frontend/.env.local
+frontend/build/
+frontend/dist/
+frontend/.next/
+frontend/node_modules/
+
+# Docker
+.docker/
+docker-compose.override.yml
