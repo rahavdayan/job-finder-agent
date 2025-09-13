@@ -56,6 +56,9 @@ export default function UploadPage() {
       const response = await ResumeService.uploadResume(file);
       setSuccess(true);
       
+      // Store resume data in localStorage for pre-filling manual entry form
+      localStorage.setItem('resumeData', JSON.stringify(response.data));
+      
       // Navigate to manual entry page after 2 seconds
       setTimeout(() => {
         router.push('/manual-entry');
