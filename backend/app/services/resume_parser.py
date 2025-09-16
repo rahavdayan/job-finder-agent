@@ -44,12 +44,77 @@ class ResumeParser:
         else:
             raise HTTPException(status_code=400, detail="Unsupported file format")
 
+    async def validate_resume(self, text: str) -> bool:
+        """
+        Validate if the extracted text is actually from a resume document.
+        Returns True if it's a resume, False otherwise.
+        """
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": """You are a document classifier. Your task is to determine if the provided text is from a resume/CV document or not.
+
+A resume/CV typically contains:
+- Personal information (name, contact details)
+- Work experience with job titles and descriptions
+- Education information
+- Skills section
+- Professional summary or objective
+
+Return a JSON response with:
+- "is_resume": boolean (true if it's a resume, false otherwise)
+- "confidence": number between 0-1 (confidence level)
+- "reason": string (brief explanation of your decision)
+
+Examples of what IS a resume:
+- Documents with work history, education, and skills
+- Professional profiles with career experience
+- CVs with academic or professional background
+
+Examples of what IS NOT a resume:
+- Random text documents
+- Academic papers or articles
+- Legal documents
+- Marketing materials
+- Personal letters
+- Technical manuals
+- Fiction or creative writing"""},
+                    {"role": "user", "content": f"Please analyze this document and determine if it's a resume:\n\n{text[:2000]}"}  # Limit to first 2000 chars for efficiency
+                ],
+                response_format={"type": "json_object"}
+            )
+            
+            validation_result = json.loads(response.choices[0].message.content)
+            is_resume = validation_result.get("is_resume", False)
+            confidence = validation_result.get("confidence", 0)
+            reason = validation_result.get("reason", "Unknown")
+            
+            # Require high confidence for validation
+            if not is_resume or confidence < 0.7:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"The uploaded document does not appear to be a resume. Reason: {reason} (Confidence: {confidence:.2f})"
+                )
+            
+            return True
+            
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=500, detail=f"Error validating document: {str(e)}")
+        except HTTPException:
+            raise  # Re-raise HTTP exceptions
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error during document validation: {str(e)}")
+
     async def parse_resume(self, file_content: bytes, file_extension: str) -> ResumeParseResponse:
         try:
             resume_text = self.extract_text(file_content, file_extension)
             
             if not resume_text.strip():
                 raise HTTPException(status_code=400, detail="No text could be extracted from the file")
+            
+            # Validate that the document is actually a resume
+            await self.validate_resume(resume_text)
             
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -86,5 +151,7 @@ class ResumeParser:
             
         except json.JSONDecodeError as e:
             raise HTTPException(status_code=500, detail=f"Error parsing OpenAI response: {str(e)}")
+        except HTTPException:
+            raise  # Re-raise HTTP exceptions (including validation errors) without wrapping
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error parsing resume: {str(e)}")

@@ -107,8 +107,8 @@ export default function ManualEntryPage() {
           skills: parsed.skills || [],
           educationLevel: parsed.education_level || '',
         }));
-        // Clear the data after using it
-        localStorage.removeItem('resumeData');
+        // Keep the data for resume bypass functionality
+        // localStorage.removeItem('resumeData');
       } catch (error) {
         console.error('Error parsing resume data:', error);
       }

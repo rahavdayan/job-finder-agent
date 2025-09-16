@@ -1,11 +1,8 @@
 export interface ResumeUploadResponse {
-  message: string;
-  data: {
-    seniority: string;
-    job_titles: string[];
-    skills: string[];
-    education_level: string;
-  };
+  seniority: string | null;
+  job_titles: string[] | null;
+  skills: string[] | null;
+  education_level: string | null;
 }
 
 export class ResumeService {

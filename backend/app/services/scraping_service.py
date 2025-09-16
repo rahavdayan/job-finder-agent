@@ -20,8 +20,11 @@ import sys
 import os
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
-# Add the project root to the Python path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Add the backend directory to the Python path
+backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# print(f"Backend directory: {backend_dir}")
+os.chdir(backend_dir)  # Change working directory to backend
+sys.path.insert(0, backend_dir)
 
 from app.db.database import SessionLocal, engine
 from app.db.models import Base, JobPageRaw, JobPageParsed

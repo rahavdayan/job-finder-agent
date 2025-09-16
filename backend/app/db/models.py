@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, ARRAY, Enum, Float
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, ARRAY, Enum, Float, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.database import Base
@@ -35,6 +35,8 @@ class JobPageParsed(Base):
     description = Column(String, nullable=True)
     seniority = Column(String, nullable=True)  # Junior, Mid-level, Senior, Lead, Manager
     education_level = Column(String, nullable=True)  # High School, BSc, MSc, PhD
+    normalized_salary_min = Column(Float, nullable=True)  # Always in yearly USD
+    normalized_salary_max = Column(Float, nullable=True)  # Always in yearly USD
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     
     # Relationship back to raw data

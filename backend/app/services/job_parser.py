@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import logging
 import argparse
@@ -7,8 +8,14 @@ from sqlalchemy.orm import Session
 from openai import OpenAI
 from dotenv import load_dotenv
 
+# Add backend directory to Python path
+backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.chdir(backend_dir)  # Change working directory to backend
+sys.path.insert(0, backend_dir)
+
 from app.db.database import SessionLocal
 from app.db.models import JobPageParsed
+from app.services.salary_normalizer import SalaryNormalizer
 
 # Load environment variables
 load_dotenv()
@@ -205,6 +212,8 @@ class JobFieldExtractor:
                 logger.info(f"Updated education_level for job {job.id}: {job.education_level}")
             
             if updated:
+                # Normalize salary after updating fields
+                SalaryNormalizer.normalize_job_salary(job)
                 db.commit()
                 
         except Exception as e:
@@ -293,7 +302,7 @@ class JobFieldExtractor:
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Extract missing job fields using OpenAI')
-    parser.add_argument('--limit', type=int, default=None,
+    parser.add_argument('--max-jobs', type=int, default=None,
                       help='Maximum number of jobs to process (default: no limit)')
     return parser.parse_args()
 
@@ -302,11 +311,11 @@ def main():
     Main function to run the job field extraction process
     """
     args = parse_arguments()
-    logger.info(f"Starting job field extraction process{'' if args.limit is None else f' (limit: {args.limit} jobs)'}")
+    logger.info(f"Starting job field extraction process{'' if args.max_jobs is None else f' (max jobs: {args.max_jobs})'}")    
     
     try:
         extractor = JobFieldExtractor()
-        stats = extractor.process_all_jobs(limit=args.limit)
+        stats = extractor.process_all_jobs(limit=args.max_jobs)
         
         logger.info("Job field extraction completed")
         logger.info(f"Statistics: {stats}")
@@ -317,8 +326,8 @@ def main():
         print(f"Jobs processed with OpenAI: {stats['jobs_processed']}")
         print(f"Jobs successfully updated: {stats['jobs_updated']}")
         print(f"API failures: {stats['api_failures']}")
-        if args.limit and stats['limit_reached']:
-            print(f"\nNote: Processing stopped after reaching the limit of {args.limit} jobs")
+        if args.max_jobs and stats['limit_reached']:
+            print(f"\nNote: Processing stopped after reaching the limit of {args.max_jobs} jobs")
         
     except Exception as e:
         logger.error(f"Job field extraction failed: {e}")
