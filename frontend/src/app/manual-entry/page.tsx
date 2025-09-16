@@ -7,6 +7,7 @@ import { JobService, JobSearchRequest } from '../../services/jobService';
 interface FormData {
   salaryMin: string;
   salaryMax: string;
+  salaryPeriod: 'hourly' | 'weekly' | 'monthly' | 'yearly';
   seniority: string;
   jobType: string[];
   jobTitles: string[];
@@ -87,6 +88,7 @@ export default function ManualEntryPage() {
   const [formData, setFormData] = useState<FormData>({
     salaryMin: '',
     salaryMax: '',
+    salaryPeriod: 'yearly',
     seniority: '',
     jobType: [],
     jobTitles: [],
@@ -120,8 +122,22 @@ export default function ManualEntryPage() {
 
     if (!formData.salaryMin) {
       newErrors.salaryMin = 'Minimum salary is required';
-    } else if (parseFloat(formData.salaryMin) < 0) {
-      newErrors.salaryMin = 'Salary must be positive';
+    } else {
+      const minValue = parseFloat(formData.salaryMin);
+      if (minValue < 0) {
+        newErrors.salaryMin = 'Salary must be positive';
+      } else {
+        // Add period-specific validation
+        if (formData.salaryPeriod === 'hourly' && minValue < 1) {
+          newErrors.salaryMin = 'Hourly rate should be at least $1';
+        } else if (formData.salaryPeriod === 'weekly' && minValue < 40) {
+          newErrors.salaryMin = 'Weekly salary should be at least $40';
+        } else if (formData.salaryPeriod === 'monthly' && minValue < 160) {
+          newErrors.salaryMin = 'Monthly salary should be at least $160';
+        } else if (formData.salaryPeriod === 'yearly' && minValue < 2000) {
+          newErrors.salaryMin = 'Yearly salary should be at least $2,000';
+        }
+      }
     }
 
     if (!formData.salaryMax) {
@@ -171,6 +187,7 @@ export default function ManualEntryPage() {
       const searchRequest: JobSearchRequest = {
         salaryMin: parseFloat(formData.salaryMin),
         salaryMax: parseFloat(formData.salaryMax),
+        salaryPeriod: formData.salaryPeriod,
         seniority: formData.seniority,
         jobType: formData.jobType,
         jobTitles: formData.jobTitles,
@@ -241,39 +258,62 @@ export default function ManualEntryPage() {
         <div className="bg-white rounded-lg shadow-lg p-8">
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Salary Range */}
-            <div className="grid md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Minimum Salary ($)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={formData.salaryMin}
-                  onChange={(e) => setFormData(prev => ({ ...prev, salaryMin: e.target.value }))}
-                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                    errors.salaryMin ? 'border-red-500' : 'border-gray-300'
-                  }`}
-                  placeholder="50000"
-                />
-                {errors.salaryMin && <p className="mt-1 text-sm text-red-600">{errors.salaryMin}</p>}
+            <div className="space-y-4">
+              <div className="grid md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Minimum Salary
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.salaryMin}
+                    onChange={(e) => setFormData(prev => ({ ...prev, salaryMin: e.target.value }))}
+                    className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      errors.salaryMin ? 'border-red-500' : 'border-gray-300'
+                    }`}
+                    placeholder="50000"
+                  />
+                  {errors.salaryMin && <p className="mt-1 text-sm text-red-600">{errors.salaryMin}</p>}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Maximum Salary
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.salaryMax}
+                    onChange={(e) => setFormData(prev => ({ ...prev, salaryMax: e.target.value }))}
+                    className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      errors.salaryMax ? 'border-red-500' : 'border-gray-300'
+                    }`}
+                    placeholder="100000"
+                  />
+                  {errors.salaryMax && <p className="mt-1 text-sm text-red-600">{errors.salaryMax}</p>}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Salary Period
+                  </label>
+                  <select
+                    value={formData.salaryPeriod}
+                    onChange={(e) => setFormData(prev => ({ ...prev, salaryPeriod: e.target.value as FormData['salaryPeriod'] }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="hourly">Per Hour</option>
+                    <option value="weekly">Per Week</option>
+                    <option value="monthly">Per Month</option>
+                    <option value="yearly">Per Year</option>
+                  </select>
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Maximum Salary ($)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={formData.salaryMax}
-                  onChange={(e) => setFormData(prev => ({ ...prev, salaryMax: e.target.value }))}
-                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                    errors.salaryMax ? 'border-red-500' : 'border-gray-300'
-                  }`}
-                  placeholder="100000"
-                />
-                {errors.salaryMax && <p className="mt-1 text-sm text-red-600">{errors.salaryMax}</p>}
-              </div>
+              <p className="text-sm text-gray-500 italic">
+                Enter salary in {formData.salaryPeriod === 'hourly' ? 'dollars per hour' : 
+                  formData.salaryPeriod === 'weekly' ? 'dollars per week' : 
+                  formData.salaryPeriod === 'monthly' ? 'dollars per month' : 
+                  'dollars per year'}
+              </p>
             </div>
 
             {/* Seniority */}

@@ -1,6 +1,7 @@
 export interface JobSearchRequest {
   salaryMin: number;
   salaryMax: number;
+  salaryPeriod: 'hourly' | 'weekly' | 'monthly' | 'yearly';
   seniority: string;
   jobType: string[];
   jobTitles: string[];
