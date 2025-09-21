@@ -36,8 +36,30 @@ export class JobService {
   }
 
   static async getJobs(filters?: JobFilters, page: number = 1, limit: number = 10): Promise<JobSearchResponse> {
-    // For now, we'll use the same endpoint but could be extended for filtering
-    // This is a placeholder that would need backend support for filtering
+    // Try to use stored search criteria first, fallback to defaults if none exist
+    console.log('📋 getJobs called with filters:', filters);
+    const storedCriteria = this.getStoredSearchCriteria();
+    console.log('📋 getJobs found stored criteria:', storedCriteria);
+    
+    if (storedCriteria) {
+      // Use stored criteria without overwriting localStorage
+      const response = await fetch(`${this.BASE_URL}/api/users/find_jobs`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(storedCriteria),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Job search failed: ${response.statusText}`);
+      }
+
+      return await response.json();
+    }
+    
+    // Fallback to default search if no stored criteria (but don't store these defaults)
     const searchData: JobSearchRequest = {
       salary_min: filters?.salaryMin || 0,
       salary_max: filters?.salaryMax || 1000000,
@@ -48,7 +70,21 @@ export class JobService {
       education_level: 'high school'
     };
 
-    return this.findJobs(searchData);
+    // Call API directly without storing defaults in localStorage
+    const response = await fetch(`${this.BASE_URL}/api/users/find_jobs`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(searchData),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || `Job search failed: ${response.statusText}`);
+    }
+
+    return await response.json();
   }
 
   static getStoredSearchCriteria(): JobSearchRequest | null {
