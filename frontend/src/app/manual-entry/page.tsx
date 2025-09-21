@@ -185,14 +185,13 @@ export default function ManualEntryPage() {
 
     try {
       const searchRequest: JobSearchRequest = {
-        salaryMin: parseFloat(formData.salaryMin),
-        salaryMax: parseFloat(formData.salaryMax),
-        salaryPeriod: formData.salaryPeriod,
+        salary_min: parseFloat(formData.salaryMin),
+        salary_max: parseFloat(formData.salaryMax),
         seniority: formData.seniority,
-        jobType: formData.jobType,
-        jobTitles: formData.jobTitles,
+        job_type: formData.jobType,
+        job_titles: formData.jobTitles,
         skills: formData.skills,
-        educationLevel: formData.educationLevel,
+        education_level: formData.educationLevel,
       };
 
       await JobService.findJobs(searchRequest);

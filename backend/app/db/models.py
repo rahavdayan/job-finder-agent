@@ -30,13 +30,13 @@ class JobPageParsed(Base):
     secondary_salary_min = Column(Float, nullable=True)  # From description using LLM
     secondary_salary_max = Column(Float, nullable=True)  # From description using LLM
     secondary_salary_rate = Column(Enum('hourly', 'weekly', 'monthly', 'yearly', 'other', name='salary_rate_enum'), nullable=True)  # From description using LLM
+    normalized_salary_min = Column(Float, nullable=True)  # Always in yearly USD
+    normalized_salary_max = Column(Float, nullable=True)  # Always in yearly USD
     job_type = Column(String, nullable=True)  # Full-time, Part-time, Contract, etc.
     skills = Column(String, nullable=True)  # Stored as comma-separated string for SQLite compatibility
     description = Column(String, nullable=True)
     seniority = Column(String, nullable=True)  # Junior, Mid-level, Senior, Lead, Manager
     education_level = Column(String, nullable=True)  # High School, BSc, MSc, PhD
-    normalized_salary_min = Column(Float, nullable=True)  # Always in yearly USD
-    normalized_salary_max = Column(Float, nullable=True)  # Always in yearly USD
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     
     # Relationship back to raw data

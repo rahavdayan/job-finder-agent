@@ -318,7 +318,7 @@ class WeWorkRemotelyScraper:
             soup = BeautifulSoup(raw_html, 'html5lib')
             
             # Extract job title
-            title_elem = soup.select_one('h2.lis-container__header__hero__company-info__title')
+            title_elem = soup.select_one('h1.lis-container__header__hero__company-info__title')
             job_title = title_elem.get_text(strip=True) if title_elem else None
             
             # Extract employer
